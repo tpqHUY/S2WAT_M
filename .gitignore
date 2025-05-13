@@ -1,0 +1,17 @@
+# Ignore pre-trained models directory
+pre_trained_models/
+
+# ignore vgg_normalised.pth
+pre_trained_models/vgg_normalised.pth
+
+# Ignore silk_png folder
+silk_png/
+
+# ignore __pycache__ folder
+__pycache__/
+
+output/
+
+model/__pycache__/
+
+selected/
