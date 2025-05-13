@@ -1,0 +1,19 @@
+name: s2wat
+channels:
+  - defaults
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.8
+  - pip
+  - numpy
+  - pillow
+  - matplotlib
+  - tqdm
+  - pytorch=1.10.0
+  - torchvision=0.11.0
+  - torchaudio=0.10.0
+  - cudatoolkit=11.3  # (nếu bạn có GPU, nếu không thì xóa dòng này đi)
+  - pip:
+      - opencv-python
+      - scikit-image
