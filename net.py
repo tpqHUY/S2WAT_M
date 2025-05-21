@@ -356,14 +356,14 @@ class Net(nn.Module):
     i_ss = self.decoder(f_ss, f_c_reso) # Identity of style
 
     # Add extra loss for silk texture
-    loss_grad_hist = self.grad_hist_loss(i_cs, i_s)  # So sánh ảnh stylized và style
-    loss_lbp = self.lbp_loss(i_cs, i_s)
-    loss_wavelet = self.wavelet_loss(i_cs, i_s)  # Thêm dòng này
+    loss_st1 = self.grad_hist_loss(i_cs, i_s)  # So sánh ảnh stylized và style
+    loss_st2 = self.lbp_loss(i_cs, i_s)
+    loss_st3 = self.wavelet_loss(i_cs, i_s)  # Thêm dòng này
 
     # Forward qua VGG để lấy features (Loss4)
     _ = self.get_interal_feature(i_cs)  # Kích hoạt hook
     _ = self.get_interal_feature(i_s)
-    loss_gram = self.filtered_gram_loss(self.gen_feature, self.style_feature)
+    loss_st4 = self.filtered_gram_loss(self.gen_feature, self.style_feature)
 
 
     # Extract features from Output
@@ -388,7 +388,7 @@ class Net(nn.Module):
       # Identity loss in feature space (how well i_cc =(xap xi) i_c in VGG features)
       loss_id_2 += self.mse_loss(f_i_cc_loss[i], f_c_loss[i]) + self.mse_loss(f_i_ss_loss[i], f_s_loss[i])
     
-    return loss_c, loss_s, loss_id_1, loss_id_2, loss_grad_hist, loss_lbp, loss_wavelet,loss_gram, i_cs
+    return loss_c, loss_s, loss_id_1, loss_id_2, loss_st1, loss_st2, loss_st3, loss_st4, i_cs
 
 
 # Example 1

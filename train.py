@@ -39,6 +39,15 @@ parser.add_argument('--style_weight', type=float, default=3)
 parser.add_argument('--id1_weight', type=float, default=50)
 parser.add_argument('--id2_weight', type=float, default=1)
 
+# Loss texture options
+# parser.add_argument('--stTotal_w', type=float, default=1) #future work 
+
+parser.add_argument('--st1_w', type=float, default=0.3)
+parser.add_argument('--st2_w', type=float, default=0.2)
+parser.add_argument('--st3_w', type=float, default=0.4)
+parser.add_argument('--st4_w', type=float, default=0.25)
+
+
 # save and count options
 parser.add_argument('--checkpoint_save_interval', type=int, default=10000)
 parser.add_argument('--loss_count_interval', type=int, default=400)
@@ -146,15 +155,19 @@ if args.resume_train:
   log_s = checkpoint['log_s']
   log_id1 = checkpoint['log_id1']
   log_id2 = checkpoint['log_id2']
+  log_st1 = checkpoint['log_st1']
+  log_st2 = checkpoint['log_st2']
+  log_st3 = checkpoint['log_st3']
+  log_st4 = checkpoint['log_st4']
   log_all = checkpoint['log_all']
 
   epoch_start = checkpoint['epoch']
   loss_count_interval = checkpoint['loss_count_interval']
   print('loading finished')
 else:
-  log_c, log_s, log_id1, log_id2, log_all = [],[],[],[],[]
+  log_c, log_s, log_id1, log_id2, log_st1, log_st2, log_st3, log_st4, log_all = [],[],[],[],[],[],[],[],[]
 
-log_c_temp, log_s_temp, log_id1_temp, log_id2_temp, log_all_temp = [],[],[],[],[]
+log_c_temp, log_s_temp, log_id1_temp, log_id2_temp, log_st1_temp, log_st2_temp, log_st3_temp, log_st4_temp, log_all_temp = [],[],[],[],[],[],[],[],[]
 
 
 # Load the model to device
@@ -171,13 +184,17 @@ if __name__ == '__main__':
     i_s = next(dataloader_style_iter).to(device)
 
     # calculate losses
-    loss_c, loss_s, loss_id_1, loss_id_2, _ = network(i_c, i_s)
-    loss_all = args.content_weight*loss_c + args.style_weight*loss_s + args.id1_weight*loss_id_1 + args.id2_weight*loss_id_2 
+    loss_c, loss_s, loss_id_1, loss_id_2, loss_st1, loss_st2, loss_st3, loss_st4, _ = network(i_c, i_s)
+    loss_all = args.content_weight*loss_c + args.style_weight*loss_s + args.id1_weight*loss_id_1 + args.id2_weight*loss_id_2 + args.st1_w*loss_st1 + args.st2_w*loss_st2 + args.st3_w*loss_st3 + args.st4_w*loss_st4
     
     log_c_temp.append(loss_c.item())
     log_s_temp.append(loss_s.item())
     log_id1_temp.append(loss_id_1.item())
     log_id2_temp.append(loss_id_2.item())
+    log_st1_temp.append(loss_st1.item())
+    log_st2_temp.append(loss_st2.item())
+    log_st3_temp.append(loss_st3.item())
+    log_st4_temp.append(loss_st4.item())
     log_all_temp.append(loss_all.item())
 
     # update parameters
@@ -192,19 +209,25 @@ if __name__ == '__main__':
       log_s.append(np.mean(np.array(log_s_temp)))
       log_id1.append(np.mean(np.array(log_id1_temp)))
       log_id2.append(np.mean(np.array(log_id2_temp)))
+      log_st1.append(np.mean(np.array(log_st1_temp)))
+      log_st2.append(np.mean(np.array(log_st2_temp)))
+      log_st3.append(np.mean(np.array(log_st3_temp)))
+      log_st4.append(np.mean(np.array(log_st4_temp)))
       log_all.append(np.mean(np.array(log_all_temp)))
 
       print('Epoch {:d}: '.format(i) + str(log_all[-1]))
 
       log_c_temp, log_s_temp = [],[]
       log_id1_temp, log_id2_temp = [],[]
+      log_st1_temp, log_st2_temp = [],[]
+      log_st3_temp, log_st4_temp = [],[]
       log_all_temp = []
 
     # save a checkpoint
     if i % args.checkpoint_save_interval == 0:
       save_checkpoint(
         encoder=network.encoder,
-        transModule=network.transModule,
+        transModule=network.transModule,      
         decoder=network.decoder,
         optimizer=optimizer,
         scheduler=scheduler,
@@ -213,6 +236,10 @@ if __name__ == '__main__':
         log_s=log_s,
         log_id1=log_id1,
         log_id2=log_id2,
+        log_st1=log_st1,
+        log_st2=log_st2,
+        log_st3=log_st3,
+        log_st4=log_st4,
         log_all=log_all,
         loss_count_interval=loss_count_interval,
         save_path=os.path.join(args.checkpoint_save_path, 'checkpoint_{}_epoch.pkl'.format(i))
