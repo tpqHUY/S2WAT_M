@@ -215,7 +215,10 @@ if __name__ == '__main__':
       log_st4.append(np.mean(np.array(log_st4_temp)))
       log_all.append(np.mean(np.array(log_all_temp)))
 
-      print('Epoch {:d}: '.format(i) + str(log_all[-1]))
+      # print('Epoch {:d}: '.format(i) + str(log_all[-1]))
+      # Monitor the loss
+      print(f"Epoch {i}: Total={log_all[-1]}, C={log_c[-1]}, S={log_s[-1]}, id1={log_id1[-1]}, id2={log_id2[-1]}, st1={log_st1[-1]}, st2={log_st2[-1]}, st3={log_st3[-1]}, st4={log_st4[-1]}")
+
 
       log_c_temp, log_s_temp = [],[]
       log_id1_temp, log_id2_temp = [],[]
