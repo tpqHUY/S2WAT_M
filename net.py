@@ -250,6 +250,7 @@ class Net(nn.Module):
   def __init__(self, encoder, decoder, transModule, lossNet):
     super(Net, self).__init__()
     self.mse_loss = nn.MSELoss()
+    self.grad_hist_loss = GradientHistogramLoss()  # add silk loss 1
     self.encoder = encoder
     self.decoder = decoder
     self.transModule = transModule
@@ -329,6 +330,9 @@ class Net(nn.Module):
     i_cc = self.decoder(f_cc, f_c_reso) # indentity of content
     i_ss = self.decoder(f_ss, f_c_reso) # Identity of style
 
+    # Tính Gradient Histogram Loss
+    loss_grad_hist = self.grad_hist_loss(i_cs, i_s)  # So sánh ảnh stylized và style
+
     # Extract features from Output
     # These VGG-style features are used to compute c, s, id losses
     # get_interal_feature() run images through VGG layers to get relu1_1 to relu5_1
@@ -390,3 +394,42 @@ class Net(nn.Module):
 # loss_c, loss_s, loss_id_1, loss_id_2, i_cs = net(i_c, i_s)
 # print(loss_c.item(), loss_s.item(), loss_id_1.item(), loss_id_2.item())
 # print(i_cs.shape)
+
+###############################Gradient Histogram Loss####################################
+class GradientHistogramLoss(nn.Module):
+    def __init__(self, bins=32, scales=[1.0, 0.5]):
+        super().__init__()
+        self.bins = bins
+        self.scales = scales
+        self.sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float32).view(1, 1, 3, 3)
+        self.sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=torch.float32).view(1, 1, 3, 3)
+
+    def forward(self, gen_img, target_img):
+        total_loss = 0.0
+        device = gen_img.device
+        self.sobel_x = self.sobel_x.to(device)
+        self.sobel_y = self.sobel_y.to(device)
+        
+        for scale in self.scales:
+            h, w = int(gen_img.shape[2] * scale), int(gen_img.shape[3] * scale)
+            gen_resized = F.interpolate(gen_img, size=(h, w), mode='bilinear')
+            target_resized = F.interpolate(target_img, size=(h, w), mode='bilinear')
+            
+            grad_x_gen = F.conv2d(gen_resized, self.sobel_x, padding=1)
+            grad_y_gen = F.conv2d(gen_resized, self.sobel_y, padding=1)
+            grad_x_target = F.conv2d(target_resized, self.sobel_x, padding=1)
+            grad_y_target = F.conv2d(target_resized, self.sobel_y, padding=1)
+            
+            theta_gen = torch.atan2(grad_y_gen, grad_x_gen) * (180 / np.pi)
+            theta_target = torch.atan2(grad_y_target, grad_x_target) * (180 / np.pi)
+            
+            hist_gen = torch.histc(theta_gen, bins=self.bins, min=-180, max=180).cpu().numpy()
+            hist_target = torch.histc(theta_target, bins=self.bins, min=-180, max=180).cpu().numpy()
+            
+            hist_gen = hist_gen / (h * w + 1e-6)
+            hist_target = hist_target / (h * w + 1e-6)
+            
+            loss = wasserstein_distance(hist_gen, hist_target)
+            total_loss += loss
+        
+        return total_loss / len(self.scales)
