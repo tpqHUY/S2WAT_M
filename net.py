@@ -453,10 +453,13 @@ class GradientHistogramLoss(nn.Module):
       gen_resized = F.interpolate(gen_img, size=(h, w), mode='bilinear')
       target_resized = F.interpolate(target_img, size=(h, w), mode='bilinear')
             
-      grad_x_gen = F.conv2d(gen_resized, self.sobel_x, padding=1)
-      grad_y_gen = F.conv2d(gen_resized, self.sobel_y, padding=1)
-      grad_x_target = F.conv2d(target_resized, self.sobel_x, padding=1)
-      grad_y_target = F.conv2d(target_resized, self.sobel_y, padding=1)
+      # Convert to grayscale
+      gen_gray = 0.2989 * gen_resized[:, 0:1] + 0.5870 * gen_resized[:, 1:2] + 0.1140 * gen_resized[:, 2:3]
+      target_gray = 0.2989 * target_resized[:, 0:1] + 0.5870 * target_resized[:, 1:2] + 0.1140 * target_resized[:, 2:3]
+      grad_x_gen = F.conv2d(gen_gray, self.sobel_x, padding=1)
+      grad_y_gen = F.conv2d(gen_gray, self.sobel_y, padding=1)
+      grad_x_target = F.conv2d(target_gray, self.sobel_x, padding=1)
+      grad_y_target = F.conv2d(target_gray, self.sobel_y, padding=1)
             
       theta_gen = torch.atan2(grad_y_gen, grad_x_gen) * (180 / np.pi)
       theta_target = torch.atan2(grad_y_target, grad_x_target) * (180 / np.pi)
