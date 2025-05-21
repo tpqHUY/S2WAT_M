@@ -251,6 +251,31 @@ class Net(nn.Module):
     super(Net, self).__init__()
     self.mse_loss = nn.MSELoss()
     self.grad_hist_loss = GradientHistogramLoss()  # add silk loss 1
+    self.lbp_loss = LBPLoss()  # add silk loss 2
+    self.wavelet_loss = WaveletLoss()  # add silk loss 3
+    self.filtered_gram_loss = FilteredGramLoss(layer='relu3_1') # add silk lóss 4
+
+# Thêm hook để lấy features từ VGG
+    self.vgg = lossNet
+    self.target_layer = None
+    self.gen_feature = None
+    self.style_feature = None
+        
+# Đăng ký hook cho layer relu3_1
+    def get_features(module, input, output, name):
+      if name == 'relu3_1':
+        self.gen_feature = output
+      elif name == 'style_relu3_1':
+        self.style_feature = output
+        
+    for name, module in self.vgg.named_children():
+      if name == 'feat_3':  # Layer relu3_1
+        module.register_forward_hook(
+          lambda m, i, o: get_features(m, i, o, 'relu3_1'))
+      if name == 'feat_4':  # Layer relu4_1 (dùng cho style)
+        module.register_forward_hook(
+          lambda m, i, o: get_features(m, i, o, 'style_relu3_1'))
+                  
     self.encoder = encoder
     self.decoder = decoder
     self.transModule = transModule
@@ -330,8 +355,16 @@ class Net(nn.Module):
     i_cc = self.decoder(f_cc, f_c_reso) # indentity of content
     i_ss = self.decoder(f_ss, f_c_reso) # Identity of style
 
-    # Tính Gradient Histogram Loss
+    # Add extra loss for silk texture
     loss_grad_hist = self.grad_hist_loss(i_cs, i_s)  # So sánh ảnh stylized và style
+    loss_lbp = self.lbp_loss(i_cs, i_s)
+    loss_wavelet = self.wavelet_loss(i_cs, i_s)  # Thêm dòng này
+
+    # Forward qua VGG để lấy features (Loss4)
+    _ = self.get_interal_feature(i_cs)  # Kích hoạt hook
+    _ = self.get_interal_feature(i_s)
+    loss_gram = self.filtered_gram_loss(self.gen_feature, self.style_feature)
+
 
     # Extract features from Output
     # These VGG-style features are used to compute c, s, id losses
@@ -355,7 +388,7 @@ class Net(nn.Module):
       # Identity loss in feature space (how well i_cc =(xap xi) i_c in VGG features)
       loss_id_2 += self.mse_loss(f_i_cc_loss[i], f_c_loss[i]) + self.mse_loss(f_i_ss_loss[i], f_s_loss[i])
     
-    return loss_c, loss_s, loss_id_1, loss_id_2, i_cs
+    return loss_c, loss_s, loss_id_1, loss_id_2, loss_grad_hist, loss_lbp, loss_wavelet,loss_gram, i_cs
 
 
 # Example 1
@@ -396,40 +429,160 @@ class Net(nn.Module):
 # print(i_cs.shape)
 
 ###############################Gradient Histogram Loss####################################
-class GradientHistogramLoss(nn.Module):
-    def __init__(self, bins=32, scales=[1.0, 0.5]):
-        super().__init__()
-        self.bins = bins
-        self.scales = scales
-        self.sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float32).view(1, 1, 3, 3)
-        self.sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=torch.float32).view(1, 1, 3, 3)
 
-    def forward(self, gen_img, target_img):
-        total_loss = 0.0
-        device = gen_img.device
-        self.sobel_x = self.sobel_x.to(device)
-        self.sobel_y = self.sobel_y.to(device)
+import torch
+import torch.nn.functional as F
+import numpy as np
+from scipy.stats import wasserstein_distance
+class GradientHistogramLoss(nn.Module):
+  def __init__(self, bins=32, scales=[1.0, 0.5]):
+    super().__init__()
+    self.bins = bins
+    self.scales = scales
+    self.sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float32).view(1, 1, 3, 3)
+    self.sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=torch.float32).view(1, 1, 3, 3)
+
+  def forward(self, gen_img, target_img):
+    total_loss = 0.0
+    device = gen_img.device
+    self.sobel_x = self.sobel_x.to(device)
+    self.sobel_y = self.sobel_y.to(device)
         
-        for scale in self.scales:
-            h, w = int(gen_img.shape[2] * scale), int(gen_img.shape[3] * scale)
-            gen_resized = F.interpolate(gen_img, size=(h, w), mode='bilinear')
-            target_resized = F.interpolate(target_img, size=(h, w), mode='bilinear')
+    for scale in self.scales:
+      h, w = int(gen_img.shape[2] * scale), int(gen_img.shape[3] * scale)
+      gen_resized = F.interpolate(gen_img, size=(h, w), mode='bilinear')
+      target_resized = F.interpolate(target_img, size=(h, w), mode='bilinear')
             
-            grad_x_gen = F.conv2d(gen_resized, self.sobel_x, padding=1)
-            grad_y_gen = F.conv2d(gen_resized, self.sobel_y, padding=1)
-            grad_x_target = F.conv2d(target_resized, self.sobel_x, padding=1)
-            grad_y_target = F.conv2d(target_resized, self.sobel_y, padding=1)
+      grad_x_gen = F.conv2d(gen_resized, self.sobel_x, padding=1)
+      grad_y_gen = F.conv2d(gen_resized, self.sobel_y, padding=1)
+      grad_x_target = F.conv2d(target_resized, self.sobel_x, padding=1)
+      grad_y_target = F.conv2d(target_resized, self.sobel_y, padding=1)
             
-            theta_gen = torch.atan2(grad_y_gen, grad_x_gen) * (180 / np.pi)
-            theta_target = torch.atan2(grad_y_target, grad_x_target) * (180 / np.pi)
+      theta_gen = torch.atan2(grad_y_gen, grad_x_gen) * (180 / np.pi)
+      theta_target = torch.atan2(grad_y_target, grad_x_target) * (180 / np.pi)
             
-            hist_gen = torch.histc(theta_gen, bins=self.bins, min=-180, max=180).cpu().numpy()
-            hist_target = torch.histc(theta_target, bins=self.bins, min=-180, max=180).cpu().numpy()
+      hist_gen = torch.histc(theta_gen, bins=self.bins, min=-180, max=180).cpu().numpy()
+      hist_target = torch.histc(theta_target, bins=self.bins, min=-180, max=180).cpu().numpy()
             
-            hist_gen = hist_gen / (h * w + 1e-6)
-            hist_target = hist_target / (h * w + 1e-6)
+      hist_gen = hist_gen / (h * w + 1e-6)
+      hist_target = hist_target / (h * w + 1e-6)
             
-            loss = wasserstein_distance(hist_gen, hist_target)
-            total_loss += loss
+      loss = wasserstein_distance(hist_gen, hist_target)
+      total_loss += loss
         
-        return total_loss / len(self.scales)
+      return total_loss / len(self.scales)
+###############################################Second Loss############################################
+class LBPLoss(nn.Module):
+  def __init__(self, radius=1, neighbors=8):
+    super().__init__()
+    self.radius = radius
+    self.neighbors = neighbors
+    # Tạo kernel để lấy điểm lân cận
+    self.unfold = nn.Unfold(kernel_size=3, padding=1)
+  
+  def forward(self, gen_img, target_img):
+    # Chuyển ảnh sang grayscale
+    gen_gray = 0.2989 * gen_img[:, 0] + 0.5870 * gen_img[:, 1] + 0.1140 * gen_img[:, 2]
+    target_gray = 0.2989 * target_img[:, 0] + 0.5870 * target_img[:, 1] + 0.1140 * target_img[:, 2]
+        
+    # Lấy giá trị lân cận
+    gen_patches = self.unfold(gen_gray.unsqueeze(1)).reshape(gen_img.shape[0], 9, -1)
+    target_patches = self.unfold(target_gray.unsqueeze(1)).reshape(target_img.shape[0], 9, -1)
+        
+    # Tính LBP (so sánh với điểm trung tâm)
+    center_gen = gen_patches[:, 4:5, :]  # Điểm trung tâm
+    center_target = target_patches[:, 4:5, :]
+        
+    lbp_gen = (gen_patches > center_gen).float()
+    lbp_target = (target_patches > center_target).float()
+        
+    # Tính L1 loss giữa các LBP patterns
+    return F.l1_loss(lbp_gen, lbp_target)
+##############################################Third Loss##################################################
+class HaarWaveletTransform(nn.Module):
+  def __init__(self):
+    super().__init__()
+    # Khởi tạo kernel Haar Wavelet thuần PyTorch
+    self.register_buffer('ll_weight', torch.tensor([[1, 1], [1, 1]], dtype=torch.float32) / 4.0)
+    self.register_buffer('lh_weight', torch.tensor([[-1, -1], [1, 1]], dtype=torch.float32) / 4.0)
+    self.register_buffer('hl_weight', torch.tensor([[-1, 1], [-1, 1]], dtype=torch.float32) / 4.0)
+    self.register_buffer('hh_weight', torch.tensor([[1, -1], [-1, 1]], dtype=torch.float32) / 4.0)
+
+  def forward(self, x):
+    b, c, h, w = x.size()
+    x = x.view(b * c, 1, h, w)  # Gộp batch và channel
+        
+    # Tạo kernel 4D [out_ch, in_ch, H, W]
+    kernel_size = 2
+    ll_kernel = self.ll_weight.view(1, 1, kernel_size, kernel_size)
+    lh_kernel = self.lh_weight.view(1, 1, kernel_size, kernel_size)
+    hl_kernel = self.hl_weight.view(1, 1, kernel_size, kernel_size)
+    hh_kernel = self.hh_weight.view(1, 1, kernel_size, kernel_size)
+        
+    # Áp dụng convolution với stride=2 để downsample
+    ll = F.conv2d(x, ll_kernel, stride=2)
+    lh = F.conv2d(x, lh_kernel, stride=2)
+    hl = F.conv2d(x, hl_kernel, stride=2)
+    hh = F.conv2d(x, hh_kernel, stride=2)
+        
+    return ll, lh, hl, hh
+class WaveletLoss(nn.Module):
+  def __init__(self):
+    super().__init__()
+    self.wavelet = HaarWaveletTransform()
+    self.mse_loss = nn.MSELoss()
+
+  def forward(self, gen_img, target_img):
+    # Chuyển ảnh -> grayscale [B, 1, H, W]
+    gen_gray = 0.2989 * gen_img[:, :1] + 0.5870 * gen_img[:, 1:2] + 0.1140 * gen_img[:, 2:3]
+    target_gray = 0.2989 * target_img[:, :1] + 0.5870 * target_img[:, 1:2] + 0.1140 * target_img[:, 2:3]
+        
+    # Wavelet decomposition
+    ll_gen, lh_gen, hl_gen, hh_gen = self.wavelet(gen_gray)
+    ll_tar, lh_tar, hl_tar, hh_tar = self.wavelet(target_gray)
+        
+    # Focus on horizontal (LH) and vertical (HL) details
+    loss = self.mse_loss(lh_gen, lh_tar) + \
+    self.mse_loss(hl_gen, hl_tar) + \
+    0.5 * self.mse_loss(hh_gen, hh_tar)
+               
+    return loss
+  
+  ##########################################Fourth Loss###############################################
+class LaplacianFilter(nn.Module):
+  def __init__(self):
+    super().__init__()
+    # Kernel Laplacian để bắt cạnh
+    kernel = torch.tensor([[0, 1, 0],
+                          [1, -4, 1],
+                          [0, 1, 0]], dtype=torch.float32).view(1, 1, 3, 3)
+    self.register_buffer('kernel', kernel)
+    
+  def forward(self, x):
+    # Áp dụng filter cho từng channel
+    b, c, h, w = x.size()
+    x = x.view(b * c, 1, h, w)  # [B*C, 1, H, W]
+    filtered = F.conv2d(x, self.kernel, padding=1)
+    return filtered.view(b, c, h, w)
+
+class FilteredGramLoss(nn.Module):
+  def __init__(self, layer='relu3_1'):
+    super().__init__()
+    self.layer = layer
+    self.laplacian = LaplacianFilter()
+    
+  def gram_matrix(self, x):
+    b, c, h, w = x.size()
+    x = x.view(b, c, -1)  # [B, C, H*W]
+    return torch.bmm(x, x.transpose(1, 2)) / (c * h * w)  # [B, C, C]
+    
+  def forward(self, gen_features, target_features):
+    # Lọc Laplacian
+    gen_filtered = self.laplacian(gen_features)
+    target_filtered = self.laplacian(target_features)
+        
+    # Tính Gram matrix
+    gram_gen = self.gram_matrix(gen_filtered)
+    gram_target = self.gram_matrix(target_filtered)
+        
+    return F.mse_loss(gram_gen, gram_target)
