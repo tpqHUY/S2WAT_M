@@ -295,27 +295,50 @@ class Net(nn.Module):
         self.mse_loss(input_std, target_std)
 
 
-  # calculate losses
+  # calculate losses 
+  ## i_c : content image
+  ## i_s : style image (same size as content image)
+  ## i_cs : generated image
+  ## f_c : content feature
+  ## f_s : style feature
+  ## f_i_cs : generated image feature
+  ## f_i_cc : content image feature
+  ## f_i_ss : style image feature
+  ## loss_c : content loss
+  ## loss_s : style loss
+  ## loss_id_1 : identity loss in pixel space
+  ## loss_id_2 : identity loss in feature space
+  ## loss_all : total loss
   def forward(self, i_c, i_s):
+    # Encode Content and Style
+    # Pass content and style images into encoder
+    # f_c, f_s : the deep features representation 
+    # f_c_reso: the original height x width resolution for decoder reshape
     f_c = self.encoder(i_c)
     f_s = self.encoder(i_s)
     f_c, f_c_reso = f_c[0], f_c[2]
     f_s, f_s_reso = f_s[0], f_s[2]
     
-    f_cs = self.transModule(f_c, f_s)
-    f_cc = self.transModule(f_c, f_c)
-    f_ss = self.transModule(f_s, f_s)
+    # Feature Transformation (Transformer Decoder)
+    f_cs = self.transModule(f_c, f_s) # blend content features with style features
+    f_cc = self.transModule(f_c, f_c) # should reconstruct the original content features
+    f_ss = self.transModule(f_s, f_s) # should reconstruct the original style features
     
-    i_cs = self.decoder(f_cs, f_c_reso)
-    i_cc = self.decoder(f_cc, f_c_reso)
-    i_ss = self.decoder(f_ss, f_c_reso)
-    
+    # Decode into Images
+    i_cs = self.decoder(f_cs, f_c_reso) # stylized image
+    i_cc = self.decoder(f_cc, f_c_reso) # indentity of content
+    i_ss = self.decoder(f_ss, f_c_reso) # Identity of style
+
+    # Extract features from Output
+    # These VGG-style features are used to compute c, s, id losses
+    # get_interal_feature() run images through VGG layers to get relu1_1 to relu5_1
     f_c_loss = self.get_interal_feature(i_c)
     f_s_loss = self.get_interal_feature(i_s)
     f_i_cs_loss = self.get_interal_feature(i_cs)
     f_i_cc_loss = self.get_interal_feature(i_cc)
     f_i_ss_loss = self.get_interal_feature(i_ss)
 
+    # Identity loss 1
     loss_id_1 = self.mse_loss(i_cc, i_c) + self.mse_loss(i_ss, i_s)
 
     loss_c, loss_s, loss_id_2 = 0, 0, 0
@@ -323,7 +346,9 @@ class Net(nn.Module):
     loss_c = self.calc_content_loss(f_i_cs_loss[-2], f_c_loss[-2], norm=True) + \
              self.calc_content_loss(f_i_cs_loss[-1], f_c_loss[-1], norm=True)
     for i in range(1, 5):
+      # Compare style statistics (mean and std) of stylized image vs style image from relu2_1 to relu5_1
       loss_s += self.calc_style_loss(f_i_cs_loss[i], f_s_loss[i])
+      # Identity loss in feature space (how well i_cc =(xap xi) i_c in VGG features)
       loss_id_2 += self.mse_loss(f_i_cc_loss[i], f_c_loss[i]) + self.mse_loss(f_i_ss_loss[i], f_s_loss[i])
     
     return loss_c, loss_s, loss_id_1, loss_id_2, i_cs
