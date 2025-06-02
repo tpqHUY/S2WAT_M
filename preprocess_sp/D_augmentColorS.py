@@ -4,8 +4,8 @@ from torchvision import transforms as T
 from tqdm import tqdm
 
 # Configuration
-input_dir    = "./selected/2tile"   # Thư mục chứa tile gốc
-output_dir   = "./selected/3augmentCl"     # Thư mục lưu ảnh augment
+input_dir    = "./../SsPM/B"   # Thư mục chứa tile gốc
+output_dir   = "./../SsPM/D"     # Thư mục lưu ảnh augment
 num_augments = 3                            # Số bản augment / ảnh
 
 os.makedirs(output_dir, exist_ok=True)

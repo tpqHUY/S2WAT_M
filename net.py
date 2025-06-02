@@ -257,24 +257,6 @@ class Net(nn.Module):
 
 # Thêm hook để lấy features từ VGG
     self.vgg = lossNet
-    self.target_layer = None
-    self.gen_feature = None
-    self.style_feature = None
-        
-# Đăng ký hook cho layer relu3_1
-    def get_features(module, input, output, name):
-      if name == 'relu3_1':
-        self.gen_feature = output
-      elif name == 'style_relu3_1':
-        self.style_feature = output
-        
-    for name, module in self.vgg.named_children():
-      if name == 'feat_3':  # Layer relu3_1
-        module.register_forward_hook(
-          lambda m, i, o: get_features(m, i, o, 'relu3_1'))
-      if name == 'feat_4':  # Layer relu4_1 (dùng cho style)
-        module.register_forward_hook(
-          lambda m, i, o: get_features(m, i, o, 'style_relu3_1'))
                   
     self.encoder = encoder
     self.decoder = decoder
@@ -361,17 +343,22 @@ class Net(nn.Module):
     loss_st3 = self.wavelet_loss(i_cs, i_s)  # Thêm dòng này
 
     # Forward qua VGG để lấy features (Loss4)
-    _ = self.get_interal_feature(i_cs)  # Kích hoạt hook
-    _ = self.get_interal_feature(i_s)
-    loss_st4 = self.filtered_gram_loss(self.gen_feature, self.style_feature)
+    features_i_cs = self.get_interal_feature(i_cs)
+    features_i_s = self.get_interal_feature(i_s)
+    features_i_c  = self.get_interal_feature(i_c)
+
+
+    gen_feature = features_i_cs[2]   # relu3_1
+    style_feature = features_i_s[2]  # relu3_1
+    loss_st4 = self.filtered_gram_loss(gen_feature, style_feature)
 
 
     # Extract features from Output
     # These VGG-style features are used to compute c, s, id losses
     # get_interal_feature() run images through VGG layers to get relu1_1 to relu5_1
-    f_c_loss = self.get_interal_feature(i_c)
-    f_s_loss = self.get_interal_feature(i_s)
-    f_i_cs_loss = self.get_interal_feature(i_cs)
+    f_c_loss = features_i_c
+    f_s_loss = features_i_s
+    f_i_cs_loss = features_i_cs
     f_i_cc_loss = self.get_interal_feature(i_cc)
     f_i_ss_loss = self.get_interal_feature(i_ss)
 
@@ -435,45 +422,75 @@ import torch.nn.functional as F
 import numpy as np
 from scipy.stats import wasserstein_distance
 class GradientHistogramLoss(nn.Module):
-  def __init__(self, bins=32, scales=[1.0, 0.5]):
-    super().__init__()
-    self.bins = bins
-    self.scales = scales
-    self.sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float32).view(1, 1, 3, 3)
-    self.sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=torch.float32).view(1, 1, 3, 3)
+    """
+    Compare gradient-orientation histograms (multi-scale) between
+    generated and target images using the 1-D Wasserstein distance.
+    """
+    def __init__(self, bins=32, scales=(1.0, 0.5)):
+        super().__init__()
+        self.bins = bins
+        self.scales = scales
 
-  def forward(self, gen_img, target_img):
-    total_loss = 0.0
-    device = gen_img.device
-    self.sobel_x = self.sobel_x.to(device)
-    self.sobel_y = self.sobel_y.to(device)
-        
-    for scale in self.scales:
-      h, w = int(gen_img.shape[2] * scale), int(gen_img.shape[3] * scale)
-      gen_resized = F.interpolate(gen_img, size=(h, w), mode='bilinear')
-      target_resized = F.interpolate(target_img, size=(h, w), mode='bilinear')
-            
-      # Convert to grayscale
-      gen_gray = 0.2989 * gen_resized[:, 0:1] + 0.5870 * gen_resized[:, 1:2] + 0.1140 * gen_resized[:, 2:3]
-      target_gray = 0.2989 * target_resized[:, 0:1] + 0.5870 * target_resized[:, 1:2] + 0.1140 * target_resized[:, 2:3]
-      grad_x_gen = F.conv2d(gen_gray, self.sobel_x, padding=1)
-      grad_y_gen = F.conv2d(gen_gray, self.sobel_y, padding=1)
-      grad_x_target = F.conv2d(target_gray, self.sobel_x, padding=1)
-      grad_y_target = F.conv2d(target_gray, self.sobel_y, padding=1)
-            
-      theta_gen = torch.atan2(grad_y_gen, grad_x_gen) * (180 / np.pi)
-      theta_target = torch.atan2(grad_y_target, grad_x_target) * (180 / np.pi)
-            
-      hist_gen = torch.histc(theta_gen, bins=self.bins, min=-180, max=180).cpu().numpy()
-      hist_target = torch.histc(theta_target, bins=self.bins, min=-180, max=180).cpu().numpy()
-            
-      hist_gen = hist_gen / (h * w + 1e-6)
-      hist_target = hist_target / (h * w + 1e-6)
-            
-      loss = wasserstein_distance(hist_gen, hist_target)
-      total_loss += loss
-        
-      return total_loss / len(self.scales)
+        # 3×3 Sobel kernels registered as buffers
+        sobel_x = [[-1, 0, 1],
+                   [-2, 0, 2],
+                   [-1, 0, 1]]
+        sobel_y = [[-1, -2, -1],
+                   [ 0,  0,  0],
+                   [ 1,  2,  1]]
+
+        self.register_buffer("sobel_x",
+                             torch.tensor(sobel_x, dtype=torch.float32)
+                                   .view(1, 1, 3, 3))
+        self.register_buffer("sobel_y",
+                             torch.tensor(sobel_y, dtype=torch.float32)
+                                   .view(1, 1, 3, 3))
+
+    def forward(self, gen_img, tgt_img):
+        """
+        Args
+        ----
+        gen_img : (B,3,H,W)  generated / stylised image, RGB ∈[0,1]
+        tgt_img : (B,3,H,W)  reference style image, RGB ∈[0,1]
+        """
+        total = 0.0
+
+        for s in self.scales:
+            # --- resize -----------------------------------------------------
+            h, w = int(gen_img.size(2) * s), int(gen_img.size(3) * s)
+            gen = F.interpolate(gen_img,  (h, w),
+                                mode='bilinear', align_corners=False)
+            tgt = F.interpolate(tgt_img,  (h, w),
+                                mode='bilinear', align_corners=False)
+
+            # --- RGB → gray --------------------------------------------------
+            gen_gray = 0.2989 * gen[:, 0:1] + 0.5870 * gen[:, 1:2] + 0.1140 * gen[:, 2:3]
+            tgt_gray = 0.2989 * tgt[:, 0:1] + 0.5870 * tgt[:, 1:2] + 0.1140 * tgt[:, 2:3]
+
+            # --- gradients ---------------------------------------------------
+            gx_g = F.conv2d(gen_gray, self.sobel_x, padding=1)
+            gy_g = F.conv2d(gen_gray, self.sobel_y, padding=1)
+            gx_t = F.conv2d(tgt_gray, self.sobel_x, padding=1)
+            gy_t = F.conv2d(tgt_gray, self.sobel_y, padding=1)
+
+            theta_g = torch.atan2(gy_g, gx_g) * (180 / np.pi)
+            theta_t = torch.atan2(gy_t, gx_t) * (180 / np.pi)
+
+            # --- orientation histograms (detach to break the graph) ---------
+            hist_g = torch.histc(theta_g.detach(),
+                                 bins=self.bins, min=-180, max=180)
+            hist_t = torch.histc(theta_t.detach(),
+                                 bins=self.bins, min=-180, max=180)
+
+            # normalise & convert to NumPy
+            area = float(h * w) + 1e-6
+            hist_g = (hist_g / area).cpu().numpy()
+            hist_t = (hist_t / area).cpu().numpy()
+
+            total += wasserstein_distance(hist_g, hist_t)
+
+        # average over scales
+        return total / len(self.scales)
 ###############################################Second Loss############################################
 class LBPLoss(nn.Module):
   def __init__(self, radius=1, neighbors=8):
@@ -562,11 +579,17 @@ class LaplacianFilter(nn.Module):
     self.register_buffer('kernel', kernel)
     
   def forward(self, x):
-    # Áp dụng filter cho từng channel
+    # x: [B, C, H, W]
     b, c, h, w = x.size()
-    x = x.view(b * c, 1, h, w)  # [B*C, 1, H, W]
+
+    # bảo đảm tensor liên tục rồi reshape
+    x = x.contiguous().view(b * c, 1, h, w)      # (B*C, 1, H, W)
+
     filtered = F.conv2d(x, self.kernel, padding=1)
+
+    # đưa về lại shape gốc
     return filtered.view(b, c, h, w)
+
 
 class FilteredGramLoss(nn.Module):
   def __init__(self, layer='relu3_1'):

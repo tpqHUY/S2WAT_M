@@ -14,7 +14,7 @@ from datetime import datetime
 
 # save the checkpoint
 def save_checkpoint(encoder, transModule, decoder, optimizer, scheduler, epoch,
-           log_c, log_s, log_id1, log_id2, log_all, loss_count_interval, save_path):
+           log_c, log_s, log_id1, log_id2, log_st1, log_st2, log_st3, log_st4, log_all, loss_count_interval, save_path):
   checkpoint = {
     'encoder': encoder.state_dict() if not encoder is None else None,
     'transModule': transModule.state_dict() if not transModule is None else None,
@@ -26,6 +26,10 @@ def save_checkpoint(encoder, transModule, decoder, optimizer, scheduler, epoch,
     'log_s': log_s if not log_s is None else None,
     'log_id1': log_id1 if not log_id1 is None else None,
     'log_id2': log_id2 if not log_id2 is None else None,
+    'log_st1': log_st1 if not log_st1 is None else None,
+    'log_st2': log_st2 if not log_st2 is None else None,
+    'log_st3': log_st3 if not log_st3 is None else None,
+    'log_st4': log_st4 if not log_st4 is None else None,
     'log_all': log_all if not log_all is None else None,
     'loss_count_interval': loss_count_interval if not loss_count_interval is None else None
   }

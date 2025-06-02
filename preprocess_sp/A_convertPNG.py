@@ -3,8 +3,8 @@ import os
 from tqdm import tqdm
 
 # Cấu hình
-input_dir = "./selected"     # Đường dẫn thư mục chứa ảnh gốc
-output_dir = "./selected/consistencyformat"       # Thư mục chứa ảnh đã chuyển thành PNG
+input_dir = "../orhsspm"     # Đường dẫn thư mục chứa ảnh gốc
+output_dir = "../SsPM"       # Thư mục chứa ảnh đã chuyển thành PNG
 
 os.makedirs(output_dir, exist_ok=True)
 
